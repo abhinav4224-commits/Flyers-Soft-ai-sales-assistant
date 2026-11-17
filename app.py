@@ -1,4 +1,4 @@
-import ipaddress, json, socket
+import ipaddress, json, socket, time
 from datetime import datetime
 from urllib.parse import urlparse, urljoin
 import requests
@@ -84,6 +84,24 @@ def read_site(raw):
         return "\n\n".join(f"URL: {u}\n{t}" for u, t in pages)[:18000], [u for u, _ in pages], ""
     except Exception as e:
         return "", [], f"Website reading failed ({type(e).__name__}); using supplied keywords."
+
+def generate_with_retry(client, model_name, prompt, attempts=3):
+    """Retry temporary Gemini overload/rate-limit/server errors."""
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return client.models.generate_content(model=model_name, contents=prompt)
+        except Exception as exc:
+            last_error = exc
+            message = str(exc).lower()
+            temporary = any(code in message for code in ("503", "unavailable", "429", "resource_exhausted", "500", "internal"))
+            if not temporary or attempt == attempts - 1:
+                raise
+            # Exponential backoff: 2s, then 5s before the final attempt.
+            delay = 2 if attempt == 0 else 5
+            time.sleep(delay)
+    raise last_error
+
 
 def prompt_for(d):
     return f"""
@@ -178,7 +196,7 @@ with t1:
             try:
                 client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
                 with st.spinner("Analysing prospect and generating your script..."):
-                    result = client.models.generate_content(model=model.strip(), contents=prompt_for(d))
+                    result = generate_with_retry(client, model.strip(), prompt_for(d), attempts=3)
                 output = result.text or "No text returned. Please try again."
                 item = {"time": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M"),
                         "person": d["person"], "title": d["title"], "company": d["company"],
@@ -187,8 +205,12 @@ with t1:
                 st.session_state.history.insert(0, item)
                 st.session_state.latest = item
             except Exception as e:
-                st.error(f"Generation failed: {e}")
-                st.caption("Check API key, model access and Gemini free-tier quota.")
+                error_text = str(e)
+                if any(code in error_text.lower() for code in ("503", "unavailable", "429", "resource_exhausted", "500", "internal")):
+                    st.warning("Gemini is temporarily busy or rate-limited. The app automatically retried three times, but the service is still unavailable. Wait a minute and click Generate again. Your lead details are still in the form.")
+                else:
+                    st.error(f"Generation failed: {e}")
+                    st.caption("Check your API key, model availability and Gemini free-tier quota.")
 
     if "latest" in st.session_state:
         x = st.session_state.latest
