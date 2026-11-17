@@ -126,7 +126,7 @@ st.title("📞 FlyersSoft AI Sales Assistant")
 st.caption("Personalised B2B cold-call scripts • Engineering partnerships • Industry-specific solutions")
 with st.sidebar:
     st.header("Settings")
-    model = st.text_input("Gemini model", "gemini-2.5-flash")
+    model = st.text_input("Gemini model", "gemini-3.8-flash")
     st.info("Add GEMINI_API_KEY under Streamlit app Settings → Secrets. Never put the key in GitHub.")
     if st.button("Clear session history"):
         st.session_state.history = []
